@@ -154,7 +154,7 @@ if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)",
             break
     save_state(state); st.rerun()
 
-st.sidebar.subheader("⚠️ 위험 구역")
+st.sidebar.subheader(⚠️ 위험 구역")
 reset_confirmation = st.sidebar.checkbox("모든 매매 기록과 자산을 초기화하려면 체크하세요.", key="reset_confirm_checkbox")
 if reset_confirmation:
     if st.sidebar.button("모든 기록 초기화 실행", type="primary", key="full_reset_btn"):
@@ -189,36 +189,82 @@ try:
         
         with col2:
             st.markdown(f"#### 📅 {current_date.date()} | 종가: {int(current_price):,}원"); st.markdown("---")
-            if st.button("▶️ 다음 날로 이동", use_container_width=True):
+            if st.button(▶️ 다음 날로 이동", use_container_width=True):
                 if state["day_index"] < len(df) - 1:
-                    new_day_index = state["day_index"] + 1; next_day = df.iloc[new_day_index]; next_day_date_iso = next_day['날짜'].date().isoformat()
+                    new_day_index = state["day_index"] + 1
+                    next_day = df.iloc[new_day_index]
+                    next_day_date_iso = next_day['날짜'].date().isoformat()
+                    
                     for order in state["pending_orders"]:
-                        if order['type'] == 'trailing_stop': order['peak_price'] = max(order.get('peak_price', 0), next_day['High'])
-                    executed_order_ids = []; executed_qty = 0
+                        if order['type'] == 'trailing_stop':
+                            order['peak_price'] = max(order.get('peak_price', 0), next_day['High'])
+                    
+                    executed_order_ids = []
+                    executed_qty = 0
                     for order in state["pending_orders"]:
-                        if order['id'] in executed_order_ids: continue
+                        if order['id'] in executed_order_ids:
+                            continue
+                        
                         if order['type'] == 'buy' and next_day['Low'] <= order['price'] and state['cash'] >= order['qty'] * order['price']:
-                            cost = order['qty'] * order['price']; total_qty = state['holdings']['quantity'] + order['qty']; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
+                            cost = order['qty'] * order['price']
+                            total_qty = state['holdings']['quantity'] + order['qty']
+                            avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
                             state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)})
-                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매수", "수량": order['qty'], "단가": int(order['price']), "금액": int(cost)}); st.toast(f"✅ [{next_day['날짜'].date()}] {int(order['price']):,}원 매수 체결!"); executed_order_ids.append(order['id'])
+                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매수", "수량": order['qty'], "단가": int(order['price']), "금액": int(cost)})
+                            st.toast(f"✅ [{next_day['날짜'].date()}] {int(order['price']):,}원 매수 체결!")
+                            executed_order_ids.append(order['id'])
+                        
                         elif order['type'] == 'sell' and next_day['High'] >= order['price'] and state['holdings']['quantity'] >= order['qty']:
-                            revenue = order['qty'] * order['price']; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - order['qty'])
+                            revenue = order['qty'] * order['price']
+                            current_avg_price = state['holdings']['avg_price']
+                            state['cash'] = float(state['cash'] + revenue)
+                            state['holdings']['quantity'] = int(state['holdings']['quantity'] - order['qty'])
                             if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
-                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매도", "수량": order['qty'], "단가": int(order['price']), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); executed_order_ids.append(order['id'])
+                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매도", "수량": order['qty'], "단가": int(order['price']), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)})
+                            st.toast(f"✅ [{next_day['날짜'].date()}] {int(order['price']):,}원 매도 체결!")
+                            executed_order_ids.append(order['id'])
+
                         elif order['type'] == 'stop_loss' and next_day['Low'] <= order['price'] and state['holdings']['quantity'] > 0:
-                            executed_qty = state['holdings']['quantity']; sell_price = order['price']; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']
-                            state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0
-                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "스탑로스매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"🚨 [{next_day['날짜'].date()}] {int(sell_price):,}원 스탑로스 체결!"); executed_order_ids.append(order['id'])
+                            executed_qty = state['holdings']['quantity']
+                            sell_price = order['price']
+                            revenue = executed_qty * sell_price
+                            current_avg_price = state['holdings']['avg_price']
+                            state['cash'] = float(state['cash'] + revenue)
+                            state['holdings']['quantity'] = 0
+                            state['holdings']['avg_price'] = 0
+                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "스탑로스매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)})
+                            st.toast(f"🚨 [{next_day['날짜'].date()}] {int(sell_price):,}원 스탑로스 체결!")
+                            executed_order_ids.append(order['id'])
+                        
                         elif order['type'] == 'trailing_stop' and state['holdings']['quantity'] > 0:
                             stop_price = order['peak_price'] * (1 - order['percentage'] / 100)
                             if next_day['Low'] <= stop_price:
-                                executed_qty = state['holdings']['quantity']; sell_price = stop_price; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']
-                                state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0
-                                state['trade_log'].append({"일자": next_day_date_iso, "유형": "트레일링매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"✅ [{next_day['날짜'].date()}] {int(sell_price):,}원 트레일링 스탑 체결!"); executed_order_ids.append(order['id'])
+                                executed_qty = state['holdings']['quantity']
+                                sell_price = stop_price
+                                revenue = executed_qty * sell_price
+                                current_avg_price = state['holdings']['avg_price']
+                                state['cash'] = float(state['cash'] + revenue)
+                                state['holdings']['quantity'] = 0
+                                state['holdings']['avg_price'] = 0
+                                state['trade_log'].append({"일자": next_day_date_iso, "유형": "트레일링매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)})
+                                st.toast(f"✅ [{next_day['날짜'].date()}] {int(sell_price):,}원 트레일링 스탑 체결!")
+                                executed_order_ids.append(order['id'])
+
                     state["pending_orders"] = [o for o in state["pending_orders"] if o['id'] not in executed_order_ids]
-                    if executed_qty > 0: state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] == 'buy']
-                    state["day_index"] = new_day_index; portfolio_value = state['cash'] + (state['holdings']['quantity'] * next_day['Close']); state['daily_portfolio_value'].append(portfolio_value); st.rerun()
-                else: st.warning("시뮬레이션 기간의 마지막 날입니다.")
+                    if executed_qty > 0:
+                        state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] == 'buy']
+                    
+                    state["day_index"] = new_day_index
+                    
+                    # --- [핵심 수정] ---
+                    # MDD 계산용 자산 가치를 저장하기 전에, float()으로 변환합니다.
+                    portfolio_value = state['cash'] + (state['holdings']['quantity'] * next_day['Close'])
+                    state['daily_portfolio_value'].append(float(portfolio_value))
+                    # --------------------
+                    
+                    st.rerun()
+                else:
+                    st.warning("시뮬레이션 기간의 마지막 날입니다.")
             
             st.markdown("---"); st.subheader("💰 자산 현황")
             c1, c2 = st.columns(2)
