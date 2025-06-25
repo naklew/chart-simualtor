@@ -195,22 +195,84 @@ try:
                 f_col1.metric("EPS", f"{int(funda['EPS'].iloc[0])}" if funda['EPS'].iloc[0] != 0 else "N/A"); f_col2.metric("BPS", f"{int(funda['BPS'].iloc[0])}" if funda['BPS'].iloc[0] != 0 else "N/A")
             else: f_col1.metric("PER", "N/A"); f_col2.metric("PBR", "N/A"); f_col1.metric("EPS", "N/A"); f_col2.metric("BPS", "N/A")
 
-        with st.expander("🛒 즉시 매매 (시장가)", expanded=False):
-            # ... (이전과 동일)
-        with st.expander("🕰️ 예약 매매 (지정가)", expanded=False):
-            # ... (이전과 동일)
-        with st.expander("🤖 자동 매매 (손절/익절)", expanded=True):
-            # ... (이전과 동일)
-        if state["pending_orders"]:
-            with st.expander("📋 예약 주문 목록", expanded=True):
-                for order in state["pending_orders"]:
-                    # ... (이전과 동일)
+            with st.expander("🛒 즉시 매매 (시장가)", expanded=False):
+                tab1, tab2 = st.tabs(["수량으로 주문", "금액으로 주문"])
+                with tab1:
+                    max_buy_qty_tab1 = int(state['cash'] // current_price) if current_price > 0 else 0
+                    buy_qty = st.number_input(f"매수 수량 (최대: {max_buy_qty_tab1}주)", min_value=0, max_value=max_buy_qty_tab1, step=10, key="buy_qty_market")
+                    if st.button("🟩 수량으로 매수", use_container_width=True, key="buy_by_qty_btn"):
+                        if buy_qty > 0:
+                            cost = buy_qty * current_price; total_qty = state['holdings']['quantity'] + buy_qty; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
+                            state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매수", "수량": buy_qty, "단가": int(current_price), "금액": int(cost)}); st.rerun()
+                    sell_qty = st.number_input(f"매도 수량 (보유: {state['holdings']['quantity']}주)", min_value=0, max_value=state['holdings']['quantity'], step=10, key="sell_qty_market")
+                    if st.button("🟥 수량으로 매도", use_container_width=True, key="sell_by_qty_btn"):
+                        if sell_qty > 0:
+                            revenue = sell_qty * current_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty)
+                            if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
+                            state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.rerun()
+                with tab2:
+                    buy_amount = st.number_input("매수 금액 (원)", min_value=0, max_value=int(state['cash']), step=100000, key="buy_amount_market")
+                    if st.button("🟩 금액으로 매수", use_container_width=True, key="buy_by_amount_btn"):
+                        if buy_amount > 0 and current_price > 0:
+                            buy_qty_from_amount = int(buy_amount // current_price)
+                            if buy_qty_from_amount > 0:
+                                cost = buy_qty_from_amount * current_price; total_qty = state['holdings']['quantity'] + buy_qty_from_amount; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
+                                state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)})
+                                state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매수", "수량": buy_qty_from_amount, "단가": int(current_price), "금액": int(cost)}); st.success(f"{buy_qty_from_amount}주 매수 실행 완료."); st.rerun()
+                            else: st.warning("입력한 금액으로 최소 1주도 매수할 수 없습니다.")
+                    max_sell_amount = int(state['holdings']['quantity'] * current_price)
+                    sell_amount = st.number_input("매도 금액 (원)", min_value=0, max_value=max_sell_amount, step=100000, key="sell_amount_market")
+                    if st.button("🟥 금액으로 매도", use_container_width=True, key="sell_by_amount_btn"):
+                        if sell_amount > 0 and current_price > 0:
+                            sell_qty_from_amount = int(sell_amount // current_price)
+                            if sell_qty_from_amount > 0 and sell_qty_from_amount <= state['holdings']['quantity']:
+                                revenue = sell_qty_from_amount * current_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty_from_amount)
+                                if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
+                                state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty_from_amount, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.success(f"{sell_qty_from_amount}주 매도 실행 완료."); st.rerun()
+                            elif sell_qty_from_amount > state['holdings']['quantity']: st.warning(f"입력한 금액은 보유 수량을 초과합니다. (최대: {max_sell_amount:,}원)")
+                            else: st.warning("입력한 금액으로 최소 1주도 매도할 수 없습니다.")
+            
+            with st.expander("🕰️ 예약 매매 (지정가)", expanded=False):
+                limit_buy_price = st.number_input("매수 희망 가격", value=int(current_price * 0.95), step=100); limit_buy_qty = st.number_input("매수 수량", min_value=0, step=10, key="limit_buy_qty")
+                if st.button(" 예약 매수", use_container_width=True, key="limit_buy_btn"):
+                    if limit_buy_price > 0 and limit_buy_qty > 0:
+                        state["pending_orders"].append({"id": time.time(), "type": "buy", "price": limit_buy_price, "qty": limit_buy_qty}); st.success(f"{int(limit_buy_price):,}원에 {limit_buy_qty}주 매수 예약 완료!"); st.rerun()
+                limit_sell_price = st.number_input("매도 희망 가격", value=int(current_price * 1.05), step=100); limit_sell_qty = st.number_input("매도 수량", min_value=0, step=10, key="limit_sell_qty")
+                if st.button(" 예약 매도", use_container_width=True, key="limit_sell_btn"):
+                    if limit_sell_price > 0 and limit_sell_qty > 0 and limit_sell_qty <= state['holdings']['quantity']:
+                        state["pending_orders"].append({"id": time.time(), "type": "sell", "price": limit_sell_price, "qty": limit_sell_qty}); st.success(f"{int(limit_sell_price):,}원에 {limit_sell_qty}주 매도 예약 완료!"); st.rerun()
+                    elif limit_sell_qty > state['holdings']['quantity']: st.warning("보유 수량보다 많이 예약할 수 없습니다.")
+            
+            with st.expander("🤖 자동 매매 (손절/익절)", expanded=True):
+                st.info("자동 매매 주문은 현재 보유한 모든 수량에 대해 적용됩니다."); sl_price = st.number_input("손절 가격 (Stop-Loss)", value=0, step=100)
+                if st.button("스탑로스 설정", use_container_width=True, key="sl_btn"):
+                    if sl_price > 0 and state['holdings']['quantity'] > 0:
+                        state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] not in ['stop_loss', 'trailing_stop']]; state["pending_orders"].append({"id": time.time(), "type": "stop_loss", "price": sl_price, "qty": state['holdings']['quantity']})
+                        st.success(f"{int(sl_price):,}원에 스탑로스 설정 완료!"); st.rerun()
+                ts_percent = st.number_input("추적 손절 하락률 (%)", min_value=0.1, max_value=50.0, value=10.0, step=0.5, format="%.1f")
+                if st.button("트레일링 스탑 설정", use_container_width=True, key="ts_btn"):
+                    if ts_percent > 0 and state['holdings']['quantity'] > 0:
+                        state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] not in ['stop_loss', 'trailing_stop']]; state["pending_orders"].append({"id": time.time(), "type": "trailing_stop", "percentage": ts_percent, "qty": state['holdings']['quantity'], "peak_price": current_price})
+                        st.success(f"고점 대비 {ts_percent}% 하락 시 매도 설정 완료!"); st.rerun()
 
+            if state["pending_orders"]:
+                st.markdown("---"); st.subheader("📋 예약 주문 목록")
+                for order in state["pending_orders"]:
+                    col_order, col_cancel = st.columns([4, 1]); order_type_map = {"buy": "지정가 매수", "sell": "지정가 매도", "stop_loss": "스탑로스", "trailing_stop": "트레일링 스탑"}; order_text = f" - {order_type_map.get(order['type'])}: {order['qty']}주"
+                    if order['type'] in ['buy', 'sell', 'stop_loss']: order_text += f" @ {int(order['price']):,}원"
+                    elif order['type'] == 'trailing_stop':
+                        stop_price = int(order.get('peak_price', current_price) * (1 - order['percentage']/100)); order_text += f" ({order['percentage']}%) / 현재가: {stop_price:,}원"
+                    col_order.write(order_text)
+                    if col_cancel.button("취소", key=f"cancel_{order['id']}", use_container_width=True):
+                        state["pending_orders"] = [o for o in state["pending_orders"] if o['id'] != order['id']]; st.rerun()
+        
         st.markdown("<hr>", unsafe_allow_html=True); st.subheader("🚀 성과 리포트")
-        # ... (이전과 동일)
+        performance = calculate_performance(state, current_price); perf_cols = st.columns(6)
+        perf_cols[0].metric("현재 총 자산", f"{performance['현재 총 자산']:,}원"); perf_cols[1].metric("누적 수익률 (%)", f"{performance['누적 수익률 (%)']}%"); perf_cols[2].metric("총 실현 손익", f"{performance['총 실현 손익']:,}원")
+        perf_cols[3].metric("승률 (%)", f"{performance['승률 (%)']}%"); perf_cols[4].metric("최대 손실률 (MDD, %)", f"{performance['최대 손실률 (MDD, %)']}%"); perf_cols[5].metric("총 매도 거래", f"{performance['총 매도 거래 횟수']}회")
         if state["trade_log"]:
             with st.expander("📒 매매 기록 상세보기"):
-                # ... (이전과 동일)
+                log_df = pd.DataFrame(state["trade_log"]); display_cols = ['일자', '유형', '수량', '단가', '금액']; st.dataframe(log_df[display_cols], use_container_width=True, hide_index=True)
         save_state(state)
 except Exception as e:
     st.error(f"❌ 시뮬레이션 실행 중 오류가 발생했습니다: {e}")
