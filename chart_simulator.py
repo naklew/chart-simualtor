@@ -154,7 +154,7 @@ if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)",
             break
     save_state(state); st.rerun()
 
-st.sidebar.subheader(⚠ 위험 구역")
+st.sidebar.subheader("⚠ 위험 구역")
 reset_confirmation = st.sidebar.checkbox("모든 매매 기록과 자산을 초기화하려면 체크하세요.", key="reset_confirm_checkbox")
 if reset_confirmation:
     if st.sidebar.button("모든 기록 초기화 실행", type="primary", key="full_reset_btn"):
