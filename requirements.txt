@@ -2,3 +2,4 @@ streamlit
 pandas
 pandas-ta
 pykrx
+numpy==1.26.4
