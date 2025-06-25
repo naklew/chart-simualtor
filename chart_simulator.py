@@ -1,4 +1,4 @@
-# [V13.0 - 최종 완성본] 줌/이동 유지 및 모든 오류 최종 수정
+# [V14.0 - The Final Version] 줌 리셋을 감수하고, 시뮬레이션의 본질(미래 숨기기)을 지키는 최종 버전
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -13,7 +13,7 @@ import numpy as np
 import time
 
 # --- 1. 초기 설정 ---
-st.set_page_config(page_title="실전 차트 시뮬레이터 V13", layout="wide")
+st.set_page_config(page_title="실전 차트 시뮬레이터 V14", layout="wide")
 st.title("📈 실전형 차트 기반 주식 시뮬레이터")
 
 INITIAL_CASH = 10_000_000
@@ -79,7 +79,7 @@ def calculate_performance(state, current_price):
         max_dd = drawdown.min() * 100 if not drawdown.empty else 0
     return {"현재 총 자산": int(current_asset), "누적 수익률 (%)": round(cumulative_return, 2), "총 실현 손익": int(total_profit_loss), "승률 (%)": round(win_rate, 2), "최대 손실률 (MDD, %)": round(max_dd, 2), "총 매도 거래 횟수": len(sell_trades)}
 
-def create_plotly_chart(df, trades, state):
+def create_plotly_chart(df, trades):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, subplot_titles=(None, 'Volume', 'MACD', 'RSI'), row_heights=[0.6, 0.1, 0.15, 0.15])
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
     if 'BBL_20_2.0' in df.columns:
@@ -96,20 +96,17 @@ def create_plotly_chart(df, trades, state):
     if 'RSI_14' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
     
-    # 매매기록은 전체 데이터에서 날짜를 기준으로 위치를 찾아 그립니다.
+    # visible_df 내에 있는 거래 기록만 필터링하여 표시
     if trades:
-        trade_df = pd.DataFrame(trades).copy()
-        trade_df['일자'] = pd.to_datetime(trade_df['일자'])
-        # 날짜를 category 인덱스로 변환하여 위치를 찾습니다.
-        trade_indices = df.reset_index().set_index('날짜')['index'].reindex(trade_df['일자']).values
-        trade_df['index'] = trade_indices
-        
-        buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
-        if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['index'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
-        if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['index'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
-
-    fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
-    fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
+        visible_trades = [t for t in trades if pd.to_datetime(t['일자']).date() >= df.index[0].date() and pd.to_datetime(t['일자']).date() <= df.index[-1].date()]
+        if visible_trades:
+            trade_df = pd.DataFrame(visible_trades); trade_df['일자'] = pd.to_datetime(trade_df['일자'])
+            buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
+            if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['일자'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
+            if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
+    
+    fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan')
+    fig.update_xaxes(type='category'); fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
 
 # --- 5. Streamlit 앱 메인 로직 ---
@@ -149,16 +146,16 @@ try:
         df_indexed = df.set_index('날짜')
         current_date = df_indexed.index[state["day_index"]]; current_price = df_indexed.iloc[state["day_index"]]['Close']
         
+        # [핵심] 차트에 보여줄 데이터(visible_df)를 항상 최신 60일치로 자릅니다.
+        window_start_index = max(0, state["day_index"] - CHART_WINDOW_SIZE + 1)
+        visible_df = df_indexed.iloc[window_start_index : state["day_index"] + 1]
+        
         st.subheader(f"📊 {get_stock_name(ticker)} ({ticker})")
         st.markdown(f"**{current_date.date()} | 종가: {int(current_price):,}원**")
         chart_config = {'displayModeBar': False, 'scrollZoom': True}
         
-        # [핵심] 차트를 그릴 때, 항상 전체 df를 전달합니다.
-        plotly_fig = create_plotly_chart(df_indexed, state.get("trade_log", []), state)
-        
-        # [핵심] 차트의 x축 범위를 '움직이는 창문'으로, '순서'를 기준으로 제한합니다.
-        window_start_index = max(0, state["day_index"] - CHART_WINDOW_SIZE + 1)
-        plotly_fig.update_xaxes(type='category', range=[window_start_index, state["day_index"]])
+        # 차트를 그릴 때는 이제 잘라낸 visible_df만 전달합니다.
+        plotly_fig = create_plotly_chart(visible_df, state.get("trade_log", []))
         
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
         
@@ -186,7 +183,6 @@ try:
                 if executed_qty > 0: state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] == 'buy']
                 state["day_index"] = new_day_index; portfolio_value = state['cash'] + (state['holdings']['quantity'] * next_day['Close']); state['daily_portfolio_value'].append(float(portfolio_value)); st.rerun()
             else: st.warning("시뮬레이션 기간의 마지막 날입니다.")
-        
         
         with st.expander("💰 자산 현황 & 기업 정보", expanded=False):
             st.subheader("자산 현황"); c1, c2 = st.columns(2); c1.metric("현금 잔액", f"{int(state['cash']):,}원"); c2.metric("평가 금액", f"{int(state['holdings']['quantity'] * current_price):,}원"); c1.metric("보유 수량", f"{state['holdings']['quantity']}주"); c2.metric("평균 단가", f"{int(state['holdings']['avg_price']):,}원")
