@@ -1,4 +1,4 @@
-# [V9.0 - 최종 검수 완료] 모든 기능과 오류가 수정된 최종 버전
+# [V12.0 - 최종 완성본] 줌/이동 유지 및 모든 오류 최종 수정
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -13,13 +13,14 @@ import numpy as np
 import time
 
 # --- 1. 초기 설정 ---
-st.set_page_config(page_title="실전 차트 시뮬레이터 V9", layout="wide")
+st.set_page_config(page_title="실전 차트 시뮬레이터 V12", layout="wide")
 st.title("📈 실전형 차트 기반 주식 시뮬레이터")
 
 INITIAL_CASH = 10_000_000
 STATE_FILE = "sim_state.json"
 MIN_DATA_PERIOD = 240
 MIN_FUTURE_PERIOD = 100
+CHART_WINDOW_SIZE = 100 # 차트에 기본적으로 보여줄 캔들 개수
 
 # --- 2. 데이터 관련 함수 ---
 @st.cache_resource
@@ -99,7 +100,7 @@ def create_plotly_chart(df, trades, state):
         if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['일자'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
         if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
     fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
-    fig.update_xaxes(type='category'); fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
+    fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
 
 # --- 5. Streamlit 앱 메인 로직 ---
@@ -136,71 +137,64 @@ try:
     if df.empty or len(df) < MIN_DATA_PERIOD: st.warning("데이터가 부족합니다.")
     else:
         if state["day_index"] >= len(df): state["day_index"] = len(df) - 1
-        df.set_index('날짜', inplace=True)
-        current_date = df.index[state["day_index"]]; current_price = df.iloc[state["day_index"]]['Close']
-        visible_df = df.iloc[:state["day_index"] + 1]
-
+        df_indexed = df.set_index('날짜')
+        current_date = df_indexed.index[state["day_index"]]; current_price = df_indexed.iloc[state["day_index"]]['Close']
+        
         st.subheader(f"📊 {get_stock_name(ticker)} ({ticker})")
         st.markdown(f"**{current_date.date()} | 종가: {int(current_price):,}원**")
         chart_config = {'displayModeBar': False, 'scrollZoom': True}
         
-        # 이제 create_plotly_chart는 전체 df를 받아 처리하지만, 화면에는 visible_df까지만 보여줍니다.
-        plotly_fig = create_plotly_chart(df, state.get("trade_log", []), state)
-        plotly_fig.update_xaxes(range=[df.index[0], visible_df.index[-1]])
-
+        # [핵심] 차트를 그릴 때, 항상 전체 df를 전달합니다.
+        plotly_fig = create_plotly_chart(df_indexed, state.get("trade_log", []), state)
+        
+        # [핵심] 차트의 x축 범위를 '움직이는 창문'으로 제한합니다.
+        window_start_index = max(0, state["day_index"] - CHART_WINDOW_SIZE)
+        window_end_index = state["day_index"]
+        plotly_fig.update_xaxes(type='category', range=[df_indexed.index[window_start_index], df_indexed.index[window_end_index]])
+        
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
         
         if st.button("▶️ 다음 날로 이동", use_container_width=True, type="primary"):
             if state["day_index"] < len(df) - 1:
-                new_day_index = state["day_index"] + 1
-                next_day = df.iloc[new_day_index]
-                next_day_date_iso = next_day.name.date().isoformat()
+                new_day_index = state["day_index"] + 1; next_day = df_indexed.iloc[new_day_index]; next_day_date_iso = next_day.name.date().isoformat()
                 for order in state["pending_orders"]:
                     if order['type'] == 'trailing_stop': order['peak_price'] = max(order.get('peak_price', 0), next_day['High'])
                 executed_order_ids = []; executed_qty = 0
                 for order in state["pending_orders"]:
                     if order['id'] in executed_order_ids: continue
                     if order['type'] == 'buy' and next_day['Low'] <= order['price'] and state['cash'] >= order['qty'] * order['price']:
-                        cost = order['qty'] * order['price']; total_qty = state['holdings']['quantity'] + order['qty']; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
-                        state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매수", "수량": order['qty'], "단가": int(order['price']), "금액": int(cost)}); st.toast(f"✅ [{next_day.name.date()}] {int(order['price']):,}원 매수 체결!"); executed_order_ids.append(order['id'])
+                        cost = order['qty'] * order['price']; total_qty = state['holdings']['quantity'] + order['qty']; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty; state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매수", "수량": order['qty'], "단가": int(order['price']), "금액": int(cost)}); st.toast(f"✅ [{next_day.name.date()}] {int(order['price']):,}원 매수 체결!"); executed_order_ids.append(order['id'])
                     elif order['type'] == 'sell' and next_day['High'] >= order['price'] and state['holdings']['quantity'] >= order['qty']:
-                        revenue = order['qty'] * order['price']; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - order['qty'])
+                        revenue = order['qty'] * order['price']; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - order['qty']);
                         if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
                         state['trade_log'].append({"일자": next_day_date_iso, "유형": "지정가매도", "수량": order['qty'], "단가": int(order['price']), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); executed_order_ids.append(order['id'])
                     elif order['type'] == 'stop_loss' and next_day['Low'] <= order['price'] and state['holdings']['quantity'] > 0:
-                        executed_qty = state['holdings']['quantity']; sell_price = order['price']; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']
-                        state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0
-                        state['trade_log'].append({"일자": next_day_date_iso, "유형": "스탑로스매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"🚨 [{next_day.name.date()}] {int(sell_price):,}원 스탑로스 체결!"); executed_order_ids.append(order['id'])
+                        executed_qty = state['holdings']['quantity']; sell_price = order['price']; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0; state['trade_log'].append({"일자": next_day_date_iso, "유형": "스탑로스매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"🚨 [{next_day.name.date()}] {int(sell_price):,}원 스탑로스 체결!"); executed_order_ids.append(order['id'])
                     elif order['type'] == 'trailing_stop' and state['holdings']['quantity'] > 0:
                         stop_price = order['peak_price'] * (1 - order['percentage'] / 100)
                         if next_day['Low'] <= stop_price:
-                            executed_qty = state['holdings']['quantity']; sell_price = stop_price; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']
-                            state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0
-                            state['trade_log'].append({"일자": next_day_date_iso, "유형": "트레일링매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"✅ [{next_day.name.date()}] {int(sell_price):,}원 트레일링 스탑 체결!"); executed_order_ids.append(order['id'])
+                            executed_qty = state['holdings']['quantity']; sell_price = stop_price; revenue = executed_qty * sell_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = 0; state['holdings']['avg_price'] = 0; state['trade_log'].append({"일자": next_day_date_iso, "유형": "트레일링매도", "수량": executed_qty, "단가": int(sell_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.toast(f"✅ [{next_day.name.date()}] {int(sell_price):,}원 트레일링 스탑 체결!"); executed_order_ids.append(order['id'])
                 state["pending_orders"] = [o for o in state["pending_orders"] if o['id'] not in executed_order_ids]
                 if executed_qty > 0: state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] == 'buy']
                 state["day_index"] = new_day_index; portfolio_value = state['cash'] + (state['holdings']['quantity'] * next_day['Close']); state['daily_portfolio_value'].append(float(portfolio_value)); st.rerun()
             else: st.warning("시뮬레이션 기간의 마지막 날입니다.")
         
         with st.expander("💰 자산 현황 & 기업 정보", expanded=False):
-            st.subheader("자산 현황"); c1, c2 = st.columns(2)
-            c1.metric("현금 잔액", f"{int(state['cash']):,}원"); c2.metric("평가 금액", f"{int(state['holdings']['quantity'] * current_price):,}원"); c1.metric("보유 수량", f"{state['holdings']['quantity']}주"); c2.metric("평균 단가", f"{int(state['holdings']['avg_price']):,}원")
+            st.subheader("자산 현황"); c1, c2 = st.columns(2); c1.metric("현금 잔액", f"{int(state['cash']):,}원"); c2.metric("평가 금액", f"{int(state['holdings']['quantity'] * current_price):,}원"); c1.metric("보유 수량", f"{state['holdings']['quantity']}주"); c2.metric("평균 단가", f"{int(state['holdings']['avg_price']):,}원")
             st.subheader("기업 정보"); date_str = current_date.strftime("%Y%m%d"); funda = get_fundamental_data(date_str, ticker); f_col1, f_col2 = st.columns(2)
-            if funda is not None and not funda.empty:
-                f_col1.metric("PER", f"{funda['PER'].iloc[0]:.2f}" if funda['PER'].iloc[0] != 0 else "N/A"); f_col2.metric("PBR", f"{funda['PBR'].iloc[0]:.2f}" if funda['PBR'].iloc[0] != 0 else "N/A"); f_col1.metric("EPS", f"{int(funda['EPS'].iloc[0])}" if funda['EPS'].iloc[0] != 0 else "N/A"); f_col2.metric("BPS", f"{int(funda['BPS'].iloc[0])}" if funda['BPS'].iloc[0] != 0 else "N/A")
+            if funda is not None and not funda.empty: f_col1.metric("PER", f"{funda['PER'].iloc[0]:.2f}" if funda['PER'].iloc[0] != 0 else "N/A"); f_col2.metric("PBR", f"{funda['PBR'].iloc[0]:.2f}" if funda['PBR'].iloc[0] != 0 else "N/A"); f_col1.metric("EPS", f"{int(funda['EPS'].iloc[0])}" if funda['EPS'].iloc[0] != 0 else "N/A"); f_col2.metric("BPS", f"{int(funda['BPS'].iloc[0])}" if funda['BPS'].iloc[0] != 0 else "N/A")
             else: f_col1.metric("PER", "N/A"); f_col2.metric("PBR", "N/A"); f_col1.metric("EPS", "N/A"); f_col2.metric("BPS", "N/A")
-
         with st.expander("🛒 즉시 매매 (시장가)", expanded=False):
             tab1, tab2 = st.tabs(["수량으로 주문", "금액으로 주문"]);
             with tab1:
                 max_buy_qty_tab1 = int(state['cash'] // current_price) if current_price > 0 else 0; buy_qty = st.number_input(f"매수 수량 (최대: {max_buy_qty_tab1}주)", min_value=0, max_value=max_buy_qty_tab1, step=10, key="buy_qty_market")
                 if st.button("🟩 수량으로 매수", use_container_width=True, key="buy_by_qty_btn"):
-                    if buy_qty > 0: cost = buy_qty * current_price; total_qty = state['holdings']['quantity'] + buy_qty; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty; state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": current_date.isoformat(), "유형": "시장가매수", "수량": buy_qty, "단가": int(current_price), "금액": int(cost)}); st.rerun()
+                    if buy_qty > 0: cost = buy_qty * current_price; total_qty = state['holdings']['quantity'] + buy_qty; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty; state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매수", "수량": buy_qty, "단가": int(current_price), "금액": int(cost)}); st.rerun()
                 sell_qty = st.number_input(f"매도 수량 (보유: {state['holdings']['quantity']}주)", min_value=0, max_value=state['holdings']['quantity'], step=10, key="sell_qty_market")
                 if st.button("🟥 수량으로 매도", use_container_width=True, key="sell_by_qty_btn"):
                     if sell_qty > 0: revenue = sell_qty * current_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty);
                     if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
-                    state['trade_log'].append({"일자": current_date.isoformat(), "유형": "시장가매도", "수량": sell_qty, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.rerun()
+                    state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.rerun()
             with tab2:
                 buy_amount = st.number_input("매수 금액 (원)", min_value=0, max_value=int(state['cash']), step=100000, key="buy_amount_market")
                 if st.button("🟩 금액으로 매수", use_container_width=True, key="buy_by_amount_btn"):
@@ -208,7 +202,7 @@ try:
                         buy_qty_from_amount = int(buy_amount // current_price)
                         if buy_qty_from_amount > 0:
                             cost = buy_qty_from_amount * current_price; total_qty = state['holdings']['quantity'] + buy_qty_from_amount; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
-                            state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": current_date.isoformat(), "유형": "시장가매수", "수량": buy_qty_from_amount, "단가": int(current_price), "금액": int(cost)}); st.success(f"{buy_qty_from_amount}주 매수 실행 완료."); st.rerun()
+                            state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)}); state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매수", "수량": buy_qty_from_amount, "단가": int(current_price), "금액": int(cost)}); st.success(f"{buy_qty_from_amount}주 매수 실행 완료."); st.rerun()
                         else: st.warning("입력한 금액으로 최소 1주도 매수할 수 없습니다.")
                 max_sell_amount = int(state['holdings']['quantity'] * current_price)
                 sell_amount = st.number_input("매도 금액 (원)", min_value=0, max_value=max_sell_amount, step=100000, key="sell_amount_market")
@@ -218,10 +212,9 @@ try:
                         if sell_qty_from_amount > 0 and sell_qty_from_amount <= state['holdings']['quantity']:
                             revenue = sell_qty_from_amount * current_price; current_avg_price = state['holdings']['avg_price']; state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty_from_amount)
                             if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
-                            state['trade_log'].append({"일자": current_date.isoformat(), "유형": "시장가매도", "수량": sell_qty_from_amount, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.success(f"{sell_qty_from_amount}주 매도 실행 완료."); st.rerun()
+                            state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty_from_amount, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.success(f"{sell_qty_from_amount}주 매도 실행 완료."); st.rerun()
                         elif sell_qty_from_amount > state['holdings']['quantity']: st.warning(f"입력한 금액은 보유 수량을 초과합니다. (최대: {max_sell_amount:,}원)")
                         else: st.warning("입력한 금액으로 최소 1주도 매도할 수 없습니다.")
-        
         with st.expander("🕰️ 예약 매매 (지정가)", expanded=False):
             limit_buy_price = st.number_input("매수 희망 가격", value=int(current_price * 0.95), step=100); limit_buy_qty = st.number_input("매수 수량", min_value=0, step=10, key="limit_buy_qty")
             if st.button(" 예약 매수", use_container_width=True, key="limit_buy_btn"):
@@ -230,7 +223,6 @@ try:
             if st.button(" 예약 매도", use_container_width=True, key="limit_sell_btn"):
                 if limit_sell_price > 0 and limit_sell_qty > 0 and limit_sell_qty <= state['holdings']['quantity']: state["pending_orders"].append({"id": time.time(), "type": "sell", "price": limit_sell_price, "qty": limit_sell_qty}); st.success(f"{int(limit_sell_price):,}원에 {limit_sell_qty}주 매도 예약 완료!"); st.rerun()
                 elif limit_sell_qty > state['holdings']['quantity']: st.warning("보유 수량보다 많이 예약할 수 없습니다.")
-        
         with st.expander("🤖 자동 매매 (손절/익절)", expanded=False):
             st.info("자동 매매 주문은 현재 보유한 모든 수량에 대해 적용됩니다."); sl_price = st.number_input("손절 가격 (Stop-Loss)", value=0, step=100)
             if st.button("스탑로스 설정", use_container_width=True, key="sl_btn"):
@@ -238,7 +230,6 @@ try:
             ts_percent = st.number_input("추적 손절 하락률 (%)", min_value=0.1, max_value=50.0, value=10.0, step=0.5, format="%.1f")
             if st.button("트레일링 스탑 설정", use_container_width=True, key="ts_btn"):
                 if ts_percent > 0 and state['holdings']['quantity'] > 0: state["pending_orders"] = [o for o in state["pending_orders"] if o['type'] not in ['stop_loss', 'trailing_stop']]; state["pending_orders"].append({"id": time.time(), "type": "trailing_stop", "percentage": ts_percent, "qty": state['holdings']['quantity'], "peak_price": current_price}); st.success(f"고점 대비 {ts_percent}% 하락 시 매도 설정 완료!"); st.rerun()
-        
         if state["pending_orders"]:
             with st.expander("📋 예약 주문 목록", expanded=True):
                 for order in state["pending_orders"]:
@@ -247,7 +238,6 @@ try:
                     elif order['type'] == 'trailing_stop': stop_price = int(order.get('peak_price', current_price) * (1 - order['percentage']/100)); order_text += f" ({order['percentage']}%) / 현재가: {stop_price:,}원"
                     col_order.write(order_text)
                     if col_cancel.button("취소", key=f"cancel_{order['id']}", use_container_width=True): state["pending_orders"] = [o for o in state["pending_orders"] if o['id'] != order['id']]; st.rerun()
-        
         st.markdown("<hr>", unsafe_allow_html=True); st.subheader("🚀 성과 리포트")
         performance = calculate_performance(state, current_price); perf_cols = st.columns(6)
         perf_cols[0].metric("현재 총 자산", f"{performance['현재 총 자산']:,}원"); perf_cols[1].metric("누적 수익률 (%)", f"{performance['누적 수익률 (%)']}%"); perf_cols[2].metric("총 실현 손익", f"{performance['총 실현 손익']:,}원")
