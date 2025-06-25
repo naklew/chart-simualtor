@@ -159,7 +159,8 @@ def create_plotly_chart(df, trades):
 if "state" not in st.session_state: st.session_state.state = load_state()
 state = st.session_state.state
 
-# --- 사이드바 (기록 초기화 기능 추가) ---
+
+# --- 사이드바 (key 추가로 오류 수정) ---
 st.sidebar.header("🔧 시뮬레이션 설정")
 ticker = st.sidebar.text_input("종목 코드", state.get("ticker", "005930"))
 st.sidebar.markdown(f"**선택 종목:** {get_stock_name(ticker)} ({ticker})")
@@ -174,7 +175,8 @@ if (ticker != state.get("ticker") or start_date.isoformat() != start_date_iso or
     st.rerun()
 
 st.sidebar.subheader("🎲 랜덤 리셋")
-if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)"):
+# [수정] key 추가
+if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)", key="random_reset_btn"):
     if state['holdings']['quantity'] > 0:
         full_df = load_data(state['ticker'], datetime.date.fromisoformat(state['start_date']), datetime.date.fromisoformat(state['end_date']))
         if not full_df.empty and state['day_index'] < len(full_df):
@@ -195,6 +197,28 @@ if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)")
             break
     save_state(state)
     st.rerun()
+
+st.sidebar.subheader("⚠️ 위험 구역")
+reset_confirmation = st.sidebar.checkbox("모든 매매 기록과 자산을 초기화하려면 체크하세요.")
+if reset_confirmation:
+    # [수정] key 추가
+    if st.sidebar.button("모든 기록 초기화 실행", type="primary", key="full_reset_btn"):
+        initial_state = {
+            "cash": INITIAL_CASH,
+            "holdings": {"quantity": 0, "avg_price": 0},
+            "trade_log": [],
+            "day_index": MIN_DATA_PERIOD,
+            "ticker": "005930",
+            "start_date": datetime.date(2020, 1, 1).isoformat(),
+            "end_date": datetime.date(2023, 12, 31).isoformat(),
+            "daily_portfolio_value": [],
+            "pending_orders": []
+        }
+        st.session_state.state = initial_state
+        save_state(initial_state)
+        st.sidebar.success("모든 기록이 초기화되었습니다. 페이지가 새로고침됩니다.")
+        time.sleep(2)
+        st.rerun()
 
 # --- [새로 추가된 기능] ---
 st.sidebar.subheader("⚠️ 위험 구역")
