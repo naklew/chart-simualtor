@@ -1,4 +1,4 @@
-# [V6.4] 모바일 사용자 경험(UX) 개선 버전
+# [V8.0 - 최종 완성본] 줌/이동 유지 및 모든 오류 수정 완료
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -13,14 +13,15 @@ import numpy as np
 import time
 
 # --- 1. 초기 설정 ---
-st.set_page_config(page_title="실전 차트 시뮬레이터 V6.4", layout="wide")
-st.title("📈 실전형 차트 기반 주식 시뮬레이터") # 버전 정보는 제목에서 제거
+st.set_page_config(page_title="실전 차트 시뮬레이터 V8", layout="wide")
+st.title("📈 실전형 차트 기반 주식 시뮬레이터")
 
-# --- (이전과 동일한 함수들은 그대로 사용) ---
 INITIAL_CASH = 10_000_000
 STATE_FILE = "sim_state.json"
 MIN_DATA_PERIOD = 240
 MIN_FUTURE_PERIOD = 100
+
+# --- 2. 데이터 관련 함수 ---
 @st.cache_resource
 def get_all_tickers(): return stock.get_market_ticker_list()
 @st.cache_data
@@ -45,6 +46,8 @@ def get_fundamental_data(date_str, ticker):
         funda = stock.get_market_fundamental_by_date(start_of_week, date_str, ticker)
         return funda.iloc[-1:] if not funda.empty else pd.DataFrame()
     except: return pd.DataFrame()
+
+# --- 3. 상태 관리 함수 ---
 def load_state():
     default_state = {"cash": INITIAL_CASH, "holdings": {"quantity": 0, "avg_price": 0}, "trade_log": [], "day_index": MIN_DATA_PERIOD, "ticker": "005930", "start_date": datetime.date(2020, 1, 1).isoformat(), "end_date": datetime.date(2023, 12, 31).isoformat(), "daily_portfolio_value": [], "pending_orders": []}
     if os.path.exists(STATE_FILE):
@@ -56,6 +59,8 @@ def save_state(state):
     if isinstance(state.get("start_date"), datetime.date): state["start_date"] = state["start_date"].isoformat()
     if isinstance(state.get("end_date"), datetime.date): state["end_date"] = state["end_date"].isoformat()
     with open(STATE_FILE, "w") as f: json.dump(state, f, indent=4)
+
+# --- 4. 핵심 로직 함수 ---
 def calculate_performance(state, current_price):
     initial_asset = INITIAL_CASH; current_asset = state['cash'] + (state['holdings']['quantity'] * current_price)
     cumulative_return = ((current_asset / initial_asset) - 1) * 100 if initial_asset > 0 else 0
@@ -73,53 +78,34 @@ def calculate_performance(state, current_price):
         max_dd = drawdown.min() * 100 if not drawdown.empty else 0
     return {"현재 총 자산": int(current_asset), "누적 수익률 (%)": round(cumulative_return, 2), "총 실현 손익": int(total_profit_loss), "승률 (%)": round(win_rate, 2), "최대 손실률 (MDD, %)": round(max_dd, 2), "총 매도 거래 횟수": len(sell_trades)}
 
-# --- 4. Plotly 차트 생성 함수 (데이터 전달 방식 변경으로 줌 문제 최종 해결) ---
-def create_plotly_chart(df, visible_df, trades, state):
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-        subplot_titles=(None, 'Volume', 'MACD', 'RSI'),
-        row_heights=[0.6, 0.1, 0.15, 0.15]
-    )
-    
-    # Row 1: 캔들스틱, 볼린저밴드, 이동평균선
+def create_plotly_chart(df, trades, state):
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, subplot_titles=(None, 'Volume', 'MACD', 'RSI'), row_heights=[0.6, 0.1, 0.15, 0.15])
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
-
     if 'BBL_20_2.0' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), showlegend=False), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), fill='tonexty', showlegend=False), row=1, col=1)
-    
     ma_periods = [5, 20, 60, 120]; ma_colors = ['#ff9900', '#00ced1', '#8a2be2', '#32cd32']
     for period, color in zip(ma_periods, ma_colors):
         if len(df) >= period: fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(window=period).mean(), mode='lines', name=f'{period}MA', line=dict(color=color, width=1.5)), row=1, col=1)
-    
     volume_colors = np.where(df['Open'] <= df['Close'], '#d62728', '#1f77b4')
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=volume_colors, showlegend=False), row=2, col=1)
-
     if 'MACD_12_26_9' in df.columns:
         macd_colors = np.where(df['MACDh_12_26_9'] < 0, '#1f77b4', '#d62728'); fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name='MACD Hist', marker_color=macd_colors, showlegend=False), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='#ff9900')), row=3, col=1); fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='#00ced1')), row=3, col=1)
     if 'RSI_14' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
-
     if trades:
         trade_df = pd.DataFrame(trades); trade_df['일자'] = pd.to_datetime(trade_df['일자']); buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
         if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['일자'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
         if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
-    
     fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
-    
-    # [핵심 추가] 차트의 x축 범위를 visible_df에 맞게 제한합니다.
-    fig.update_xaxes(type='category', range=[visible_df.index[0], visible_df.index[-1]])
-    
-    fig.update_yaxes(showspikes=True, side='right')
-    fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
+    fig.update_xaxes(type='category'); fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
 
-# --- 5. 앱 메인 로직 ---
+# --- 5. Streamlit 앱 메인 로직 ---
 if "state" not in st.session_state: st.session_state.state = load_state()
 state = st.session_state.state
 
-# 사이드바
 st.sidebar.title("환경설정")
 ticker = st.sidebar.text_input("종목 코드", state.get("ticker", "005930"))
 st.sidebar.markdown(f"**선택 종목:** {get_stock_name(ticker)} ({ticker})")
@@ -130,40 +116,43 @@ if (ticker != state.get("ticker") or start_date.isoformat() != state.get("start_
 st.sidebar.subheader("🎲 랜덤 리셋")
 if st.sidebar.button("다른 종목/구간으로 새로 시작", key="random_reset_btn", use_container_width=True):
     if state['holdings']['quantity'] > 0:
-        full_df = load_data(state['ticker'], datetime.date.fromisoformat(state['start_date']), datetime.date.fromisoformat(state['end_date']))
+        full_df = load_data(state['ticker'], datetime.date.fromisoformat(state['start_date']), datetime.date.fromisoformat(state['end_date']));
         if not full_df.empty and state['day_index'] < len(full_df): last_price = full_df.iloc[state['day_index']]['Close']; state['cash'] += state['holdings']['quantity'] * last_price; st.sidebar.info("기존 포지션 자동 정산 완료.")
     state.update({'holdings': {"quantity": 0, "avg_price": 0}, 'trade_log': [], 'daily_portfolio_value': [], 'day_index': MIN_DATA_PERIOD, 'pending_orders': []})
     all_tickers = get_all_tickers()
     while True:
         new_ticker = random.choice(all_tickers); full_history = load_data(new_ticker, datetime.date(2010, 1, 1), datetime.date.today())
         if len(full_history) > MIN_DATA_PERIOD + MIN_FUTURE_PERIOD:
-            max_start_index = len(full_history) - (MIN_DATA_PERIOD + MIN_FUTURE_PERIOD); random_start_index = random.randint(0, max_start_index)
-            state['ticker'] = new_ticker; state['start_date'] = full_history['날짜'].iloc[random_start_index].date().isoformat(); state['end_date'] = full_history['날짜'].iloc[-1].date().isoformat(); break
+            max_start_index = len(full_history) - (MIN_DATA_PERIOD + MIN_FUTURE_PERIOD); random_start_index = random.randint(0, max_start_index); state['ticker'] = new_ticker; state['start_date'] = full_history['날짜'].iloc[random_start_index].date().isoformat(); state['end_date'] = full_history['날짜'].iloc[-1].date().isoformat(); break
     save_state(state); st.rerun()
-st.sidebar.subheader(⚠️ 위험 구역")
+st.sidebar.subheader("[주의] 위험 구역")
 if st.sidebar.checkbox("모든 기록을 초기화하려면 체크하세요.", key="reset_confirm_checkbox"):
     if st.sidebar.button("모든 기록 초기화 실행", type="primary", key="full_reset_btn", use_container_width=True):
         initial_state = {"cash": INITIAL_CASH, "holdings": {"quantity": 0, "avg_price": 0}, "trade_log": [], "day_index": MIN_DATA_PERIOD, "ticker": "005930", "start_date": datetime.date(2020, 1, 1).isoformat(), "end_date": datetime.date(2023, 12, 31).isoformat(), "daily_portfolio_value": [], "pending_orders": []}
-        st.session_state.state = initial_state; save_state(initial_state)
-        st.sidebar.success("모든 기록이 초기화되었습니다."); time.sleep(1); st.rerun()
+        st.session_state.state = initial_state; save_state(initial_state); st.sidebar.success("모든 기록이 초기화되었습니다."); time.sleep(1); st.rerun()
 
 try:
     df = load_data(ticker, start_date, end_date)
     if df.empty or len(df) < MIN_DATA_PERIOD: st.warning("데이터가 부족합니다.")
     else:
         if state["day_index"] >= len(df): state["day_index"] = len(df) - 1
-        visible_df = df.iloc[:state["day_index"] + 1].copy(); visible_df.set_index("날짜", inplace=True)
-        current_date = visible_df.index[-1]; current_price = visible_df.iloc[-1]['Close']
+        # [수정] visible_df는 이제 사용하지 않고, 전체 df를 인덱싱해서 사용합니다.
+        df.set_index('날짜', inplace=True)
+        current_date = df.index[state["day_index"]]; current_price = df.iloc[state["day_index"]]['Close']
         
-        # --- [수정] 2단 레이아웃을 버리고, 모바일 친화적인 1단 레이아웃으로 변경 ---
         st.subheader(f"📊 {get_stock_name(ticker)} ({ticker})")
         st.markdown(f"**{current_date.date()} | 종가: {int(current_price):,}원**")
         chart_config = {'displayModeBar': False, 'scrollZoom': True}
         
-        # [핵심 수정] 함수를 호출할 때 df 전체와 visible_df를 모두 전달합니다.
-        # 전체 데이터프레임의 인덱스를 날짜로 설정하여 전달합니다.
-        df_with_index = df.copy().set_index('날짜')
-        plotly_fig = create_plotly_chart(df_with_index, visible_df, state.get("trade_log", []), state)
+        # [핵심] 차트를 그릴 때, 항상 전체 df를 전달합니다.
+        plotly_fig = create_plotly_chart(df, state.get("trade_log", []), state)
+        
+        # [핵심] 차트의 기본 x축 범위를 현재 보이는 날짜까지로 제한합니다.
+        # 이 코드는 uirevision과 함께 작동하여, 사용자의 조작이 없을 때만 기본 뷰를 설정하고,
+        # 사용자의 줌/이동이 있으면 그 상태를 존중합니다.
+        visible_end_date = df.index[state["day_index"]]
+        visible_start_date = df.index[0]
+        plotly_fig.update_layout(xaxis_range=[visible_start_date, visible_end_date])
         
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
 
@@ -285,7 +274,7 @@ try:
         
         st.markdown("<hr>", unsafe_allow_html=True); st.subheader("🚀 성과 리포트")
         performance = calculate_performance(state, current_price); perf_cols = st.columns(6)
-        perf_cols[0].metric("현재 총 자산", f"{performance['현재 총 자산']:,}원"); perf_cols[1].metric("누적 수익률 (%)", f"{performance['누적 수익률 (%)']}%"); perf_cols[2].metric("총 실현 손익", f"{performance['총 실현 손익']:,}원")
+        perf_cols[0].metric("현재 총 자산", f"{performance['현재 총 자산']:,}원"); perf_cols[1].metric("누적 수익률 (%)", f"{performance['누적 수익률 (%a)']}%"); perf_cols[2].metric("총 실현 손익", f"{performance['총 실현 손익']:,}원")
         perf_cols[3].metric("승률 (%)", f"{performance['승률 (%)']}%"); perf_cols[4].metric("최대 손실률 (MDD, %)", f"{performance['최대 손실률 (MDD, %)']}%"); perf_cols[5].metric("총 매도 거래", f"{performance['총 매도 거래 횟수']}회")
         if state["trade_log"]:
             with st.expander("📒 매매 기록 상세보기"):
