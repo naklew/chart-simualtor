@@ -1,4 +1,4 @@
-# [V14.0 - 최종 완성본] 줌/이동 유지 및 모든 오류 최종 수정
+# [V13.0 - 최종 완성본] 줌/이동 유지 및 모든 오류 최종 수정
 import streamlit as st
 import pandas as pd
 import pandas_ta as ta
@@ -13,7 +13,7 @@ import numpy as np
 import time
 
 # --- 1. 초기 설정 ---
-st.set_page_config(page_title="실전 차트 시뮬레이터 V14", layout="wide")
+st.set_page_config(page_title="실전 차트 시뮬레이터 V13", layout="wide")
 st.title("📈 실전형 차트 기반 주식 시뮬레이터")
 
 INITIAL_CASH = 10_000_000
@@ -81,6 +81,7 @@ def calculate_performance(state, current_price):
 
 def create_plotly_chart(df, trades, state):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, subplot_titles=(None, 'Volume', 'MACD', 'RSI'), row_heights=[0.6, 0.1, 0.15, 0.15])
+    # [수정] 차트는 이제 전달받은 df (visible_df)만을 사용하여 그립니다.
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
     if 'BBL_20_2.0' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), showlegend=False), row=1, col=1)
@@ -96,6 +97,7 @@ def create_plotly_chart(df, trades, state):
     if 'RSI_14' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
     
+    # 매매 기록은 전달받은 df(visible_df) 내에서만 찾아서 그립니다.
     if trades:
         visible_trades = [t for t in trades if pd.to_datetime(t['일자']).date() >= df.index[0].date() and pd.to_datetime(t['일자']).date() <= df.index[-1].date()]
         if visible_trades:
@@ -105,6 +107,8 @@ def create_plotly_chart(df, trades, state):
             if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
     
     fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
+    # [핵심] 이제 x축을 무조건 'category' 타입으로만 설정합니다. range는 메인 로직에서 제어합니다.
+    fig.update_xaxes(type='category')
     fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
 
@@ -145,15 +149,21 @@ try:
         df_indexed = df.set_index('날짜')
         current_date = df_indexed.index[state["day_index"]]; current_price = df_indexed.iloc[state["day_index"]]['Close']
         
-        # [핵심] 차트에 보여줄 데이터(visible_df)는 항상 전체 과거 기록을 포함합니다.
+        # [핵심] 차트에 보여줄 데이터(visible_df)는 항상 현재까지의 전체 과거 기록을 포함합니다.
         visible_df = df_indexed.iloc[:state["day_index"] + 1]
-
+        
         st.subheader(f"📊 {get_stock_name(ticker)} ({ticker})")
         st.markdown(f"**{current_date.date()} | 종가: {int(current_price):,}원**")
         chart_config = {'displayModeBar': False, 'scrollZoom': True}
         
         # 차트를 그릴 때는 이제 visible_df만 전달하여, 미래 데이터를 완벽히 숨깁니다.
         plotly_fig = create_plotly_chart(visible_df, state.get("trade_log", []), state)
+        
+        # [핵심] 차트의 x축 범위를 '움직이는 창문'으로, '순서'를 기준으로 제한합니다.
+        # 이렇게 하면 'category' 타입과 충돌하지 않으면서 기본 뷰를 제어할 수 있습니다.
+        window_end_index = len(visible_df) - 1
+        window_start_index = max(0, window_end_index - CHART_WINDOW_SIZE + 1)
+        plotly_fig.update_xaxes(range=[window_start_index, window_end_index])
         
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
         
