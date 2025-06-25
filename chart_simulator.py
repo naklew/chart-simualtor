@@ -79,27 +79,32 @@ def calculate_performance(state, current_price):
         max_dd = drawdown.min() * 100 if not drawdown.empty else 0
     return {"현재 총 자산": int(current_asset), "누적 수익률 (%)": round(cumulative_return, 2), "총 실현 손익": int(total_profit_loss), "승률 (%)": round(win_rate, 2), "최대 손실률 (MDD, %)": round(max_dd, 2), "총 매도 거래 횟수": len(sell_trades)}
 
+# 수정 코드 (수정 후)
 def create_plotly_chart(df, trades, state):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, subplot_titles=(None, 'Volume', 'MACD', 'RSI'), row_heights=[0.6, 0.1, 0.15, 0.15])
-    # [수정] 차트는 이제 전달받은 df (visible_df)만을 사용하여 그립니다.
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
+    
+    # x축에 날짜 데이터를 사용하고, Plotly가 알아서 공백 없이 처리하도록 type='category'를 설정합니다.
+    # 이렇게 하면 호버(hover) 시 날짜가 정확히 표시됩니다.
+    fig.add_trace(go.Candlestick(x=df['날짜'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
     if 'BBL_20_2.0' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), showlegend=False), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), fill='tonexty', showlegend=False), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['날짜'], y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), showlegend=False), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['날짜'], y=df['BBU_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), fill='tonexty', showlegend=False), row=1, col=1)
     ma_periods = [5, 20, 60, 120]; ma_colors = ['#ff9900', '#00ced1', '#8a2be2', '#32cd32']
     for period, color in zip(ma_periods, ma_colors):
-        if len(df) >= period: fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(window=period).mean(), mode='lines', name=f'{period}MA', line=dict(color=color, width=1.5)), row=1, col=1)
-    volume_colors = np.where(df['Open'] <= df['Close'], '#d62728', '#1f77b4')
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=volume_colors, showlegend=False), row=2, col=1)
-    if 'MACD_12_26_9' in df.columns:
-        macd_colors = np.where(df['MACDh_12_26_9'] < 0, '#1f77b4', '#d62728'); fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name='MACD Hist', marker_color=macd_colors, showlegend=False), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='#ff9900')), row=3, col=1); fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='#00ced1')), row=3, col=1)
-    if 'RSI_14' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
+        if len(df) >= period: fig.add_trace(go.Scatter(x=df['날짜'], y=df['Close'].rolling(window=period).mean(), mode='lines', name=f'{period}MA', line=dict(color=color, width=1.5)), row=1, col=1)
     
-    # 매매 기록은 전달받은 df(visible_df) 내에서만 찾아서 그립니다.
+    volume_colors = np.where(df['Open'] <= df['Close'], '#d62728', '#1f77b4')
+    fig.add_trace(go.Bar(x=df['날짜'], y=df['Volume'], name='Volume', marker_color=volume_colors, showlegend=False), row=2, col=1)
+    
+    if 'MACD_12_26_9' in df.columns:
+        macd_colors = np.where(df['MACDh_12_26_9'] < 0, '#1f77b4', '#d62728'); fig.add_trace(go.Bar(x=df['날짜'], y=df['MACDh_12_26_9'], name='MACD Hist', marker_color=macd_colors, showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df['날짜'], y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='#ff9900')), row=3, col=1); fig.add_trace(go.Scatter(x=df['날짜'], y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='#00ced1')), row=3, col=1)
+    if 'RSI_14' in df.columns:
+        fig.add_trace(go.Scatter(x=df['날짜'], y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
+    
     if trades:
-        visible_trades = [t for t in trades if pd.to_datetime(t['일자']).date() >= df.index[0].date() and pd.to_datetime(t['일자']).date() <= df.index[-1].date()]
+        # 이 부분은 수정할 필요 없습니다. 날짜를 기준으로 필터링하고 날짜를 x축으로 사용하므로 그대로 둡니다.
+        visible_trades = [t for t in trades if pd.to_datetime(t['일자']).date() >= df['날짜'].iloc[0].date() and pd.to_datetime(t['일자']).date() <= df['날짜'].iloc[-1].date()]
         if visible_trades:
             trade_df = pd.DataFrame(visible_trades); trade_df['일자'] = pd.to_datetime(trade_df['일자'])
             buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
@@ -107,8 +112,11 @@ def create_plotly_chart(df, trades, state):
             if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
     
     fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
-    # [핵심] 이제 x축을 무조건 'category' 타입으로만 설정합니다. range는 메인 로직에서 제어합니다.
+    
+    # [핵심] x축을 'category' 타입으로 설정하여 날짜 사이의 공백을 제거합니다.
+    # 메인 로직에서 정수 인덱스로 range를 지정하더라도, category 타입의 축은 정수 위치로 범위를 해석할 수 있습니다.
     fig.update_xaxes(type='category')
+    
     fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
 
@@ -141,16 +149,20 @@ if st.sidebar.checkbox("모든 기록을 초기화하려면 체크하세요.", k
         initial_state = {"cash": INITIAL_CASH, "holdings": {"quantity": 0, "avg_price": 0}, "trade_log": [], "day_index": MIN_DATA_PERIOD, "ticker": "005930", "start_date": datetime.date(2020, 1, 1).isoformat(), "end_date": datetime.date(2023, 12, 31).isoformat(), "daily_portfolio_value": [], "pending_orders": []}
         st.session_state.state = initial_state; save_state(initial_state); st.sidebar.success("모든 기록이 초기화되었습니다."); time.sleep(1); st.rerun()
 
+# 수정 코드 (수정 후)
 try:
     df = load_data(ticker, start_date, end_date)
     if df.empty or len(df) < MIN_DATA_PERIOD: st.warning("데이터가 부족합니다.")
     else:
         if state["day_index"] >= len(df): state["day_index"] = len(df) - 1
-        df_indexed = df.set_index('날짜')
-        current_date = df_indexed.index[state["day_index"]]; current_price = df_indexed.iloc[state["day_index"]]['Close']
+        # df_indexed = df.set_index('날짜') # <<-- 이 줄을 제거하거나 주석 처리합니다.
+        current_data_row = df.iloc[state["day_index"]]
+        current_date = current_data_row['날짜']
+        current_price = current_data_row['Close']
         
         # [핵심] 차트에 보여줄 데이터(visible_df)는 항상 현재까지의 전체 과거 기록을 포함합니다.
-        visible_df = df_indexed.iloc[:state["day_index"] + 1]
+        # 이제 df는 기본 정수 인덱스를 가지므로 iloc를 사용합니다.
+        visible_df = df.iloc[:state["day_index"] + 1]
         
         st.subheader(f"📊 {get_stock_name(ticker)} ({ticker})")
         st.markdown(f"**{current_date.date()} | 종가: {int(current_price):,}원**")
@@ -160,10 +172,10 @@ try:
         plotly_fig = create_plotly_chart(visible_df, state.get("trade_log", []), state)
         
         # [핵심] 차트의 x축 범위를 '움직이는 창문'으로, '순서'를 기준으로 제한합니다.
-        # 이렇게 하면 'category' 타입과 충돌하지 않으면서 기본 뷰를 제어할 수 있습니다.
+        # df가 정수 인덱스를 가지므로 이 코드가 이제 정상적으로 작동합니다.
         window_end_index = len(visible_df) - 1
         window_start_index = max(0, window_end_index - CHART_WINDOW_SIZE + 1)
-        plotly_fig.update_xaxes(range=[window_start_index, window_end_index])
+        plotly_fig.update_xaxes(range=[window_start_index, window_end_index]) # <<-- 이제 정상 작동
         
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
         
