@@ -73,8 +73,8 @@ def calculate_performance(state, current_price):
         max_dd = drawdown.min() * 100 if not drawdown.empty else 0
     return {"현재 총 자산": int(current_asset), "누적 수익률 (%)": round(cumulative_return, 2), "총 실현 손익": int(total_profit_loss), "승률 (%)": round(win_rate, 2), "최대 손실률 (MDD, %)": round(max_dd, 2), "총 매도 거래 횟수": len(sell_trades)}
 
-# --- 4. Plotly 차트 생성 함수 (줌 상태 유지를 위한 uirevision 추가) ---
-def create_plotly_chart(df, trades):
+# --- 4. Plotly 차트 생성 함수 (줌/이동 방식 및 상태 유지 최종 수정) ---
+def create_plotly_chart(df, trades, state):
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
         subplot_titles=(None, 'Volume', 'MACD', 'RSI'),
@@ -85,8 +85,9 @@ def create_plotly_chart(df, trades):
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='OHLC', increasing_line_color='#d62728', decreasing_line_color='#1f77b4'), row=1, col=1)
 
     if 'BBL_20_2.0' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), name='BB Lower'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), fill='tonexty', name='BB Upper'), row=1, col=1)
+        # showlegend=False 옵션으로 범례를 깔끔하게 정리합니다.
+        fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), name='BB Lower', showlegend=False), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], mode='lines', line=dict(color='rgba(0,100,255,0.2)'), fill='tonexty', name='BB Upper', showlegend=False), row=1, col=1)
     
     ma_periods = [5, 20, 60, 120]; ma_colors = ['#ff9900', '#00ced1', '#8a2be2', '#32cd32']
     for period, color in zip(ma_periods, ma_colors):
@@ -94,12 +95,12 @@ def create_plotly_chart(df, trades):
     
     # Row 2: 거래량
     volume_colors = np.where(df['Open'] <= df['Close'], '#d62728', '#1f77b4')
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=volume_colors), row=2, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color=volume_colors, showlegend=False), row=2, col=1)
 
     # Row 3: MACD
     if 'MACD_12_26_9' in df.columns:
         macd_colors = np.where(df['MACDh_12_26_9'] < 0, '#1f77b4', '#d62728')
-        fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name='MACD Hist', marker_color=macd_colors), row=3, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name='MACD Hist', marker_color=macd_colors, showlegend=False), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='#ff9900')), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='#00ced1')), row=3, col=1)
 
@@ -121,8 +122,10 @@ def create_plotly_chart(df, trades):
         height=700, 
         margin=dict(l=10, r=10, b=10, t=10), 
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        # uirevision 속성을 고정된 값으로 설정하여 줌 상태를 기억하게 합니다.
-        uirevision='some-constant-value'
+        # 1. 드래그 모드를 '이동'으로 고정
+        dragmode='pan',
+        # 2. 줌/이동 상태를 현재 '종목 코드'에 귀속시켜 기억하게 함
+        uirevision=state['ticker']
     )
     # --------------------
     
