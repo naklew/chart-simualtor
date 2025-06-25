@@ -149,7 +149,7 @@ try:
         chart_config = {'displayModeBar': False, 'scrollZoom': True}
         
         # 차트를 그릴 때는 이제 잘라낸 visible_df만 전달합니다.
-        plotly_fig = create_plotly_chart(visible_df, state.get("trade_log", []), state)
+        plotly_fig = create_plotly_chart(visible_df, state.get("trade_log", []))
         
         st.plotly_chart(plotly_fig, use_container_width=True, config=chart_config)
         
