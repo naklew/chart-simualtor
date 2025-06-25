@@ -159,18 +159,27 @@ def create_plotly_chart(df, trades):
 if "state" not in st.session_state: st.session_state.state = load_state()
 state = st.session_state.state
 
-st.sidebar.header("🔧 시뮬레이션 설정"); ticker = st.sidebar.text_input("종목 코드", state.get("ticker", "005930"))
+# --- 사이드바 (기록 초기화 기능 추가) ---
+st.sidebar.header("🔧 시뮬레이션 설정")
+ticker = st.sidebar.text_input("종목 코드", state.get("ticker", "005930"))
 st.sidebar.markdown(f"**선택 종목:** {get_stock_name(ticker)} ({ticker})")
-start_date = st.sidebar.date_input("시작 날짜", datetime.date.fromisoformat(state.get("start_date")))
-end_date = st.sidebar.date_input("종료 날짜", datetime.date.fromisoformat(state.get("end_date")))
-if (ticker != state.get("ticker") or start_date.isoformat() != state.get("start_date") or end_date.isoformat() != state.get("end_date")):
-    state.update({"ticker": ticker, "start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "day_index": MIN_DATA_PERIOD, "pending_orders": [], "trade_log": []}); st.rerun()
+
+start_date_iso = state.get("start_date", datetime.date(2020, 1, 1).isoformat())
+end_date_iso = state.get("end_date", datetime.date(2023, 12, 31).isoformat())
+start_date = st.sidebar.date_input("시작 날짜", datetime.date.fromisoformat(start_date_iso))
+end_date = st.sidebar.date_input("종료 날짜", datetime.date.fromisoformat(end_date_iso))
+
+if (ticker != state.get("ticker") or start_date.isoformat() != start_date_iso or end_date.isoformat() != end_date_iso):
+    state.update({"ticker": ticker, "start_date": start_date.isoformat(), "end_date": end_date.isoformat(), "day_index": MIN_DATA_PERIOD, "pending_orders": [], "trade_log": []})
+    st.rerun()
+
 st.sidebar.subheader("🎲 랜덤 리셋")
 if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)"):
     if state['holdings']['quantity'] > 0:
         full_df = load_data(state['ticker'], datetime.date.fromisoformat(state['start_date']), datetime.date.fromisoformat(state['end_date']))
         if not full_df.empty and state['day_index'] < len(full_df):
-            last_price = full_df.iloc[state['day_index']]['종가']; state['cash'] += state['holdings']['quantity'] * last_price
+            last_price = full_df.iloc[state['day_index']]['Close']
+            state['cash'] += state['holdings']['quantity'] * last_price
             st.sidebar.info(f"기존 포지션 자동 정산 완료.")
     state.update({'holdings': {"quantity": 0, "avg_price": 0}, 'trade_log': [], 'daily_portfolio_value': [], 'day_index': MIN_DATA_PERIOD, 'pending_orders': []})
     all_tickers = get_all_tickers()
@@ -180,9 +189,37 @@ if st.sidebar.button("다른 종목/구간으로 새로 시작 (자산 유지)")
         if len(full_history) > MIN_DATA_PERIOD + MIN_FUTURE_PERIOD:
             max_start_index = len(full_history) - (MIN_DATA_PERIOD + MIN_FUTURE_PERIOD)
             random_start_index = random.randint(0, max_start_index)
-            state['ticker'] = new_ticker; state['start_date'] = full_history['날짜'].iloc[random_start_index].date().isoformat(); state['end_date'] = full_history['날짜'].iloc[-1].date().isoformat()
+            state['ticker'] = new_ticker
+            state['start_date'] = full_history['날짜'].iloc[random_start_index].date().isoformat()
+            state['end_date'] = full_history['날짜'].iloc[-1].date().isoformat()
             break
-    save_state(state); st.rerun()
+    save_state(state)
+    st.rerun()
+
+# --- [새로 추가된 기능] ---
+st.sidebar.subheader("⚠️ 위험 구역")
+reset_confirmation = st.sidebar.checkbox("모든 매매 기록과 자산을 초기화하려면 체크하세요.")
+if reset_confirmation:
+    if st.sidebar.button("모든 기록 초기화 실행", type="primary"):
+        # 초기 상태를 정의합니다.
+        initial_state = {
+            "cash": INITIAL_CASH,
+            "holdings": {"quantity": 0, "avg_price": 0},
+            "trade_log": [],
+            "day_index": MIN_DATA_PERIOD,
+            "ticker": "005930",
+            "start_date": datetime.date(2020, 1, 1).isoformat(),
+            "end_date": datetime.date(2023, 12, 31).isoformat(),
+            "daily_portfolio_value": [],
+            "pending_orders": []
+        }
+        # 현재 세션의 상태를 초기 상태로 덮어쓰고,
+        st.session_state.state = initial_state
+        # 그 상태를 파일에 저장하여 영구적으로 반영합니다.
+        save_state(initial_state)
+        st.sidebar.success("모든 기록이 초기화되었습니다. 페이지가 새로고침됩니다.")
+        time.sleep(2) # 2초간 메시지를 보여준 후
+        st.rerun() # 앱을 새로고침합니다.
 
 try:
     df = load_data(ticker, start_date, end_date)
@@ -279,26 +316,32 @@ try:
 
             with st.expander("🛒 즉시 매매 (시장가)", expanded=False):
                 tab1, tab2 = st.tabs(["수량으로 주문", "금액으로 주문"])
+
+                # --- 탭 1: 수량으로 주문 ---
                 with tab1:
                     max_buy_qty_tab1 = int(state['cash'] // current_price) if current_price > 0 else 0
                     buy_qty = st.number_input(f"매수 수량 (최대: {max_buy_qty_tab1}주)", min_value=0, max_value=max_buy_qty_tab1, step=10, key="buy_qty_market")
-                    if st.button("🟩 수량으로 매수", use_container_width=True):
+                    # [수정] key 추가
+                    if st.button("🟩 수량으로 매수", use_container_width=True, key="buy_by_qty_btn"):
                         if buy_qty > 0:
                             cost = buy_qty * current_price; total_qty = state['holdings']['quantity'] + buy_qty; avg_price = (state['holdings']['avg_price'] * state['holdings']['quantity'] + cost) / total_qty
                             state.update({'holdings': {'quantity': int(total_qty), 'avg_price': float(avg_price)}, 'cash': float(state['cash'] - cost)})
                             state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매수", "수량": buy_qty, "단가": int(current_price), "금액": int(cost)}); st.rerun()
 
-                sell_qty = st.number_input(f"매도 수량 (보유: {state['holdings']['quantity']}주)", min_value=0, max_value=state['holdings']['quantity'], step=10, key="sell_qty_market")
-                if st.button("🟥 수량으로 매도", use_container_width=True):
-                    if sell_qty > 0:
-                        revenue = sell_qty * current_price; current_avg_price = state['holdings']['avg_price']
-                        state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty)
-                        if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
-                        state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.rerun()
+                    sell_qty = st.number_input(f"매도 수량 (보유: {state['holdings']['quantity']}주)", min_value=0, max_value=state['holdings']['quantity'], step=10, key="sell_qty_market")
+                    # [수정] key 추가
+                    if st.button("🟥 수량으로 매도", use_container_width=True, key="sell_by_qty_btn"):
+                        if sell_qty > 0:
+                            revenue = sell_qty * current_price; current_avg_price = state['holdings']['avg_price']
+                            state['cash'] = float(state['cash'] + revenue); state['holdings']['quantity'] = int(state['holdings']['quantity'] - sell_qty)
+                            if state['holdings']['quantity'] == 0: state['holdings']['avg_price'] = 0
+                            state['trade_log'].append({"일자": current_date.date().isoformat(), "유형": "시장가매도", "수량": sell_qty, "단가": int(current_price), "금액": int(revenue), "avg_price_at_sale": float(current_avg_price)}); st.rerun()
                 
+                # --- 탭 2: 금액으로 주문 ---
                 with tab2:
                     buy_amount = st.number_input("매수 금액 (원)", min_value=0, max_value=int(state['cash']), step=100000, key="buy_amount_market")
-                    if st.button("🟩 금액으로 매수", use_container_width=True):
+                    # [수정] key 추가
+                    if st.button("🟩 금액으로 매수", use_container_width=True, key="buy_by_amount_btn"):
                         if buy_amount > 0 and current_price > 0:
                             buy_qty_from_amount = int(buy_amount // current_price)
                             if buy_qty_from_amount > 0:
@@ -310,7 +353,8 @@ try:
                     
                     max_sell_amount = int(state['holdings']['quantity'] * current_price)
                     sell_amount = st.number_input("매도 금액 (원)", min_value=0, max_value=max_sell_amount, step=100000, key="sell_amount_market")
-                    if st.button("🟥 금액으로 매도", use_container_width=True):
+                    # [수정] key 추가
+                    if st.button("🟥 금액으로 매도", use_container_width=True, key="sell_by_amount_btn"):
                         if sell_amount > 0 and current_price > 0:
                             sell_qty_from_amount = int(sell_amount // current_price)
                             if sell_qty_from_amount > 0 and sell_qty_from_amount <= state['holdings']['quantity']:
