@@ -95,11 +95,19 @@ def create_plotly_chart(df, trades, state):
         fig.add_trace(go.Scatter(x=df.index, y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='#ff9900')), row=3, col=1); fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='#00ced1')), row=3, col=1)
     if 'RSI_14' in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='purple')), row=4, col=1); fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1); fig.add_hline(y=30, line_dash="dash", line_color="blue", row=4, col=1)
-    if trades:
-        trade_df = pd.DataFrame(trades); trade_df['일자'] = pd.to_datetime(trade_df['일자']); buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
-        if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['일자'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
-        if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['일자'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
     
+    # 매매기록은 전체 데이터에서 날짜를 기준으로 위치를 찾아 그립니다.
+    if trades:
+        trade_df = pd.DataFrame(trades).copy()
+        trade_df['일자'] = pd.to_datetime(trade_df['일자'])
+        # 날짜를 category 인덱스로 변환하여 위치를 찾습니다.
+        trade_indices = df.reset_index().set_index('날짜')['index'].reindex(trade_df['일자']).values
+        trade_df['index'] = trade_indices
+        
+        buy_trades = trade_df[trade_df['유형'].str.contains('매수')]; sell_trades = trade_df[trade_df['유형'].str.contains('매도')]
+        if not buy_trades.empty: fig.add_trace(go.Scatter(x=buy_trades['index'], y=buy_trades['단가'], mode='markers', name='매수', marker=dict(symbol='triangle-up', color='#ff0000', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
+        if not sell_trades.empty: fig.add_trace(go.Scatter(x=sell_trades['index'], y=sell_trades['단가'], mode='markers', name='매도', marker=dict(symbol='triangle-down', color='#0000ff', size=12, line=dict(width=1, color='DarkSlateGrey'))), row=1, col=1)
+
     fig.update_layout(xaxis_rangeslider_visible=False, height=600, margin=dict(l=10, r=10, b=10, t=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), dragmode='pan', uirevision=state['ticker'])
     fig.update_yaxes(showspikes=True, side='right'); fig.update_xaxes(visible=False, row=1, col=1); fig.update_xaxes(visible=False, row=2, col=1); fig.update_xaxes(visible=False, row=3, col=1); fig.update_xaxes(showticklabels=False, row=4, col=1)
     return fig
@@ -148,7 +156,7 @@ try:
         # [핵심] 차트를 그릴 때, 항상 전체 df를 전달합니다.
         plotly_fig = create_plotly_chart(df_indexed, state.get("trade_log", []), state)
         
-        # [핵심] 차트의 x축 범위를 '움직이는 창문'으로 제한합니다.
+        # [핵심] 차트의 x축 범위를 '움직이는 창문'으로, '순서'를 기준으로 제한합니다.
         window_start_index = max(0, state["day_index"] - CHART_WINDOW_SIZE + 1)
         plotly_fig.update_xaxes(type='category', range=[window_start_index, state["day_index"]])
         
