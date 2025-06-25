@@ -189,7 +189,7 @@ try:
         
         with col2:
             st.markdown(f"#### 📅 {current_date.date()} | 종가: {int(current_price):,}원"); st.markdown("---")
-            if st.button(▶️ 다음 날로 이동", use_container_width=True):
+            if st.button("▶️ 다음 날로 이동", use_container_width=True):
                 if state["day_index"] < len(df) - 1:
                     new_day_index = state["day_index"] + 1
                     next_day = df.iloc[new_day_index]
