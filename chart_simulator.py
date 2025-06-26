@@ -181,7 +181,7 @@ try:
         
         if st.button("▶️ 다음 날로 이동", use_container_width=True, type="primary"):
             if state["day_index"] < len(df) - 1:
-                new_day_index = state["day_index"] + 1; next_day = df_indexed.iloc[new_day_index]; next_day_date_iso = next_day.name.date().isoformat()
+                new_day_index = state["day_index"] + 1; next_day = df.iloc[new_day_index]; next_day_date_iso = next_day['날짜'].date().isoformat()
                 for order in state["pending_orders"]:
                     if order['type'] == 'trailing_stop': order['peak_price'] = max(order.get('peak_price', 0), next_day['High'])
                 executed_order_ids = []; executed_qty = 0
